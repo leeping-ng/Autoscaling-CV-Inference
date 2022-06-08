@@ -55,23 +55,43 @@ App Engine has a [default timeout of 10 minutes](https://cloud.google.com/build/
 
 While the timeout can be adjusted, I decided to keep the App Engine deployment simple and only use it to try load testing and autoscaling. Thus, I excluded PeekingDuck from App Engine - CV instances here only need save the received image to Cloud Storage without performing any inference. More details can be found in the [source code](server/app_engine_save_img/main.py). We will simulate an actual real-world use case with PeekingDuck when using Kubernetes Engine.
 
+### Without Autoscaling
+
 First, let's see how it performs without autoscaling by setting the `max_instances` config in `app.yaml` to only 1 instance. The following settings were used for the load test:
 - **Number of users**: 1000
 - **Spawn rate**: Ramp up at 100 users/sec till max number of users is reached
 
-<img src='images/app_engine/1_inst_1000_users_100_spawn_rate.png' width='500'><br>
-*Limited to 1 instance - 16% failure*
+<img src='images/app_engine/1_inst_1000_users_100_spawn_rate.png'><br>
+*Limited to 1 instance - 83% failure*
 
-The first plot above (Total Requests per Second) shows some failed requests, represented by the **red line**. The second plot above (Response Times) shows the response time gradually creeping up to about 10 seconds on average when the failures started happening.
+The first plot above (Total Requests per Second) shows many failed requests, represented by the **red line**. The second plot above (Response Times) shows the 95% percentile of response time gradually creeping up to about 12 seconds.
+
+### With Autoscaling
 
 Next, let's remove the `max_instances` limitation and see how App Engine performs under the same load conditions.
 
-<img src='images/app_engine/unlimited_inst_1000_users_100_spawn_rate.png' width='500'><br>
+<img src='images/app_engine/unlimited_inst_1000_users_100_spawn_rate.png'><br>
 *No limit to instances - 0% failure*
 
-The first plot above (Total Requests per Second) shows that there were no failed requests when autoscaling is enabled. The Requests per Second (RPS) also attains a higher value. The second plot above (Response Times) also show more reasonable response times of about 1.5 seconds compared to 10 seconds previously. Clearly, this run has benefited from autoscaling.
+The first plot above (Total Requests per Second) shows that there were no failed requests when autoscaling is enabled. The number of Requests per Second (RPS) stabilises at about 300. The second plot above (Response Times) shows the 95% percentile of response time of about 6 seconds with an average of 3 seconds. Clearly, this run has benefited from autoscaling.
 
-<img src='images/app_engine/app_engine_instances.png' width='500'><br>
+<img src='images/app_engine/app_engine_instances.png'><br>
 *Google App Engine Instances*
 
 The screenshot above from Google App Engine's GUI shows that 13 instances have been spun up to handle the load. The number of requests handled vary across the board - it is likely that the instances which have handled less requests were spun up later.
+
+### Adding Initialisation Time
+
+It is quite common for CV inference instances to require initialisation time for importing heavy packages such as TensorFlow and OpenCV, or for downloading model weights. This means that while App Engine has spun up a new instance to handle the increased traffic, this new instance is not quite ready to receive traffic yet, which may lead to failures. 
+
+I added a 10 second delay and ran the same load test with autoscaling enabled. The failure rate was 100% (unfortunately not captured in plots) at the beginning, as expected, as the instances were still undergoing "initialisation". As more instances completed initialisation, the failure rate started to drop until it reached about 4% at the end of this run. 
+
+<img src='images/app_engine/unlimited_inst_10_sec_init.png'><br>
+*With 10 second delay - 4% failure*
+
+The plots above did not capture the ramp up to 1000 users, and therefore we cannot observe the 100% failure rate. However, the red line in first plot above (Total Requests per Second) shows that there were still some failed requests about halfway through the run. The median response time in second plot above (Response Times) is also much higher at about 10 seconds at the beginning, before it started dropping and stabilising at 3 seconds.
+
+
+## Other Findings
+
+- A timestamp is appended to the filename of each resulting image that is saved to Google Cloud Storage. Multiple resulting images could be produced within the same second, and since they have the same filename, the file would keep getting overwritten. This has caused errors in the past as it exceeded the rate limit of change requests in Cloud Storage. This was fixed by including microseconds to the filename (nanoseconds would only be required for a >1,000 FPS camera which is not realistic for our use case).

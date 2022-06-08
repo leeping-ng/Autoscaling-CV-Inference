@@ -9,7 +9,7 @@ import base64
 import os
 
 from dotenv import load_dotenv
-from locust import HttpUser, between, task
+from locust import HttpUser, task
 
 load_dotenv()
 
@@ -24,8 +24,6 @@ data = {"name": OBJECT_NAME, "image": image_encoded}
 
 
 class WebsiteUser(HttpUser):
-    wait_time = between(15, 30)
-
     @task
     def index(self):
         self.client.post(URL, json=data)
