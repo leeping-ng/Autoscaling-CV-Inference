@@ -1,0 +1,5 @@
+python-dotenv
+google-cloud-storage
+fastapi
+uvicorn[standard]
+gunicorn
