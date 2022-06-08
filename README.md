@@ -2,7 +2,7 @@
 
 ## Overview
 
-This repository was created to consolidate the code used and results collected from experimenting with **autoscaling Computer Vision (CV) inference instances** in the cloud. Before we proceed further, a couple of terms will be explained in the following paragraphs.
+This repository consolidates the code used and results collected from experimenting with **autoscaling Computer Vision (CV) inference instances** in the cloud. Before we proceed further, a couple of terms will be explained in the following paragraphs.
 
 What is a **CV inference instance**? Here, I define it as a **single** virtual machine (VM) or serverless application, running a CV AI model such as YOLO for object detection. For example, an instance receives an image of this cute Shiba Inu, and the CV model correctly infers that it is a "Dog", returning the predicted image with a superimposed bounding box and label.
 
@@ -22,7 +22,7 @@ Combining what we now know, the following use cases will benefit from the abilit
 ## Architecture
 
 The architecture used for these experiments is shown below. It can be described in 3 parts:
-1. **Client** - A load testing tool is used to create multiple clients. Each client encodes an image into [base64 format](https://www.geeksforgeeks.org/python-convert-image-to-string-and-vice-versa/), and makes a POST request to the server with the encoded message.
+1. **Client** - A load testing tool is used to create multiple clients. Each client encodes an image into [base64 format](https://www.geeksforgeeks.org/python-convert-image-to-string-and-vice-versa/), and makes a POST request to the server with the encoded message. This is used to simulate some of the use cases described previously.
 2. **Server** - Hosted on the cloud. A load balancer allows all POST requests be made to a common URL, and increases or decreases the number of instances depending on the load.
 3. **Storage** - Hosted on the cloud. Stores the inference results from each server instance in .jpeg format.
 
@@ -31,12 +31,20 @@ The architecture used for these experiments is shown below. It can be described 
 
 ## Tools Used
 
-An open source load testing tool, [Locust](https://locust.io/), is used to simulate multiple camera feeds sending video frames to the compute instances. 
+Google Cloud Platform (GCP) is the cloud computing service used here (AWS or Microsoft Azure are other options). While GCP has several services which support autoscaling, we will be focusing on these two:
 
-FastAPI
-PeekingDuck
-Google Cloud
+| Service | Pros | Cons |
+|---------------------------------------------------------|-------|-------|
+| [Google App Engine](https://cloud.google.com/appengine) |  - Serverless and easy to deploy | - Least control over deployment <br> - Limited compute resource (max 2GB RAM) <br> - Does not support containers | 
+| [Google Kubernetes Engine](https://cloud.google.com/kubernetes-engine) | - More compute power <br> - Supports containers <br> - More control over K8s clusters and VMs | - More effort to set up
 
+App Engine and Kubernetes Engine were chosen because they are at the 2 extremes, but other possible services that are somewhat in-between are [Cloud Run](https://cloud.google.com/run) and [Compute Engine Managed Instance Groups (MIGs)](https://cloud.google.com/compute/docs/instance-groups/creating-groups-of-managed-instances).
+
+Other key tools used in this study are:
+- [Locust](https://locust.io/) - An open source load testing tool which will create multiple client instances to send POST requests to the load balancer on GCP
+- [Google Cloud Storage](https://cloud.google.com/storage) - Object storage to store the resulting image files from CV inference
+- [PeekingDuck](https://github.com/aimakerspace/PeekingDuck) - A CV inference framework. Each instance will be running it's own copy of PeekingDuck.
+- [FastAPI](https://fastapi.tiangolo.com/) - A high performance web framework that will be used as the server for each instance. [Flask](https://flask.palletsprojects.com/en/2.1.x/) was used initially, but it did not perform as well as FastAPI as it is a development server.
 
 
 ## Google App Engine
