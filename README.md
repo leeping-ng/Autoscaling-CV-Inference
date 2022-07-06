@@ -33,19 +33,20 @@ The architecture used for these experiments is shown below. It can be described 
 
 ## Tools Used
 
-Google Cloud Platform (GCP) is the cloud computing service used here (AWS or Microsoft Azure are other options). While GCP has several services which support autoscaling, we will be focusing on these two:
+Google Cloud Platform (GCP) is the cloud computing service used here (AWS or Microsoft Azure are other options). GCP has several services which support autoscaling:
 
 | Service | Pros | Cons |
 |---------------------------------------------------------|-------|-------|
 | [Google App Engine](https://cloud.google.com/appengine) |  - Serverless and easy to deploy | - Least control over deployment <br> - Limited compute resource (max 2GB RAM) <br> - Does not support containers | 
-| [Google Kubernetes Engine](https://cloud.google.com/kubernetes-engine) | - More compute power <br> - Supports containers <br> - More control over K8s clusters and VMs | - More effort to set up
+| [Google Cloud Run](https://cloud.google.com/run) | - Serverless and easy to deploy <br> - Supports containers <br> - More control over deployment than App Engine | - Less control over deployment than Kubernetes Engine |
+| [Google Kubernetes Engine](https://cloud.google.com/kubernetes-engine) | - More compute power <br> - Supports containers <br> - More control over K8s clusters and VMs | - More effort to set up |
 
-App Engine and Kubernetes Engine were chosen because they are at the 2 extremes, but other possible services that are somewhat in-between are [Cloud Run](https://cloud.google.com/run) and [Compute Engine Managed Instance Groups (MIGs)](https://cloud.google.com/compute/docs/instance-groups/creating-groups-of-managed-instances).
+Thus, App Engine and Kubernetes Engine are at the 2 extremes, while Cloud Run lies somewhere in between. Another service that supports autoscaling but not be evaluated here is [Compute Engine Managed Instance Groups (MIGs)](https://cloud.google.com/compute/docs/instance-groups/creating-groups-of-managed-instances).
 
 Other key tools used in this study are:
 - [Locust](https://locust.io/) - An open source load testing tool which will create multiple client instances to send POST requests to the load balancer on GCP.
 - [Google Cloud Storage](https://cloud.google.com/storage) - Object storage to store the resulting image files from CV inference.
-- [PeekingDuck](https://github.com/aimakerspace/PeekingDuck) - A CV inference framework. Each instance will be running it's own copy of PeekingDuck.
+- [PeekingDuck](https://github.com/aimakerspace/PeekingDuck) - A CV inference framework. Each instance will be running its own copy of PeekingDuck.
 - [FastAPI](https://fastapi.tiangolo.com/) - A high performance web framework that will be used as the server for each instance. [Flask](https://flask.palletsprojects.com/en/2.1.x/) was used initially, but it did not perform as well as FastAPI as it is a development server.
 
 
@@ -53,7 +54,7 @@ Other key tools used in this study are:
 
 App Engine has a [default timeout of 10 minutes](https://cloud.google.com/build/docs/deploying-builds/deploy-appengine#:~:text=This%20is%20required%20because%20Cloud,than%2010%20minutes%20to%20complete.) for builds and deployments, and this was exceeded when PeekingDuck was included as a dependency as heavy sub-dependencies such as TensorFlow and Pytorch had to be installed.
 
-While the timeout can be adjusted, I decided to keep the App Engine deployment simple and only use it to try load testing and autoscaling. Thus, I excluded PeekingDuck from App Engine - CV instances here only need save the received image to Cloud Storage without performing any inference. More details can be found in the [source code](server/app_engine_save_img/main.py). We will simulate an actual real-world use case with PeekingDuck when using Kubernetes Engine.
+While the timeout can be adjusted, I decided to keep the App Engine deployment simple and only use it to try load testing and autoscaling. Thus, I excluded PeekingDuck from App Engine - CV instances here only need to save the received image to Cloud Storage without performing any inference. More details can be found in the [source code](server/app_engine_save_img/main.py). We will simulate an actual real-world use case with PeekingDuck when using Cloud Run and Kubernetes Engine.
 
 ### Without Autoscaling
 
@@ -84,12 +85,14 @@ The screenshot above from Google App Engine's GUI shows that 13 instances have b
 
 It is quite common for CV inference instances to require initialisation time for importing heavy packages such as TensorFlow and OpenCV, or for downloading model weights. This means that while App Engine has spun up a new instance to handle the increased traffic, this new instance is not quite ready to receive traffic yet, which may lead to failures. 
 
-I added a 10 second delay and ran the same load test with autoscaling enabled. The failure rate was 100% (unfortunately not captured in plots) at the beginning, as expected, as the instances were still undergoing "initialisation". As more instances completed initialisation, the failure rate started to drop until it reached about 4% at the end of this run. 
+I added a 10 second delay and ran the same load test with autoscaling enabled. Some requests started to fail, as expected, as the instances were still undergoing "initialisation". At worst, the failure rate reached about 8%. As more instances completed initialisation, the number of instantaneous failures gradually dropped zero.
 
 <img src='images/app_engine/unlimited_inst_10_sec_init.png'><br>
-*With 10 second delay - 4% failure*
+*With 10 second delay - 8% failure at max*
 
-The plots above did not capture the ramp up to 1000 users, and therefore we cannot observe the 100% failure rate. However, the red line in first plot above (Total Requests per Second) shows that there were still some failed requests about halfway through the run. The median response time in second plot above (Response Times) is also much higher at about 10 seconds at the beginning, before it started dropping and stabilising at 3 seconds.
+The red line in first plot above (Total Requests per Second) shows that there were some failed requests about halfway through the run. The median response time in second plot above (Response Times) is also much higher at about 10 seconds at the beginning, before it started dropping and stabilising at 3 seconds.
+
+From these results, it is apparent that initialisation time does lead to failures, and we will see how we can mitigate this in the next section on Cloud Run.
 
 
 ## Other Findings
