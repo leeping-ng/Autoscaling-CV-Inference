@@ -37,7 +37,7 @@ Google Cloud Platform (GCP) is the cloud computing service used here (AWS or Mic
 
 | Service | Pros | Cons |
 |---------------------------------------------------------|-------|-------|
-| [Google App Engine](https://cloud.google.com/appengine) |  - Serverless and easy to deploy | - Least control over deployment <br> - Limited compute resource (max 2GB RAM) <br> - Does not support containers | 
+| [Google App Engine](https://cloud.google.com/appengine) <br> (Using Standard Environment) |  - Serverless and easy to deploy | - Least control over deployment <br> - Limited compute resource (max 2GB RAM) <br> - Does not support containers | 
 | [Google Cloud Run](https://cloud.google.com/run) | - Serverless and easy to deploy <br> - Supports containers <br> - More control over deployment than App Engine | - Less control over deployment than Kubernetes Engine |
 | [Google Kubernetes Engine](https://cloud.google.com/kubernetes-engine) | - More compute power <br> - Supports containers <br> - More control over K8s clusters and VMs | - More effort to set up |
 
@@ -49,23 +49,37 @@ Other key tools used in this study are:
 - [PeekingDuck](https://github.com/aimakerspace/PeekingDuck) - A CV inference framework. Each instance will be running its own copy of PeekingDuck.
 - [FastAPI](https://fastapi.tiangolo.com/) - A high performance web framework that will be used as the server for each instance. [Flask](https://flask.palletsprojects.com/en/2.1.x/) was used initially, but it did not perform as well as FastAPI as it is a development server.
 
+## Load Test Conditions
+
+The Locust load testing tool will be used. Locust will create multiple client instances/users to send repeated POST requests of the Shiba Inu image in base64 format.
+
+The following settings will be used for the load test:
+- **Number of users**: 1000
+- **Spawn rate**: Ramp up at 100 users/sec till max number of users is reached
+
+If you are familiar with Locust, the [`wait_time`](https://docs.locust.io/en/stable/writing-a-locustfile.html) method is sometimes used to introduce delays after each task execution for each user. However in our case, it is not specified, thus the next task will be executed as soon as one finishes.
+
+What constitutes a failed request? 
+- Most of the failures in the subsequent experiments are caused by **503 server errors**, where the server (e.g. app on App Engine) is temporarily unable to handle the request as it is overwhelmed. 
+- A very small fraction of failures are **429 client errors**, where the rate of requests is too high, the server detects too many attempts within a short period of time and activates a rate-limiting feature.
+
+Request timeout errors are not encountered as by default, App Engine Standard with automatic scaling has a [10 min timeout](https://cloud.google.com/appengine/docs/standard/python3/how-instances-are-managed#timeout), and Cloud Run has a [5 min timeout](https://cloud.google.com/run/docs/configuring/request-timeout). The plots in the subsequent sections show that the response times do not come anywhere close to these timeout limits.
 
 ## Google App Engine Results
 
-App Engine has a [default timeout of 10 minutes](https://cloud.google.com/build/docs/deploying-builds/deploy-appengine#:~:text=This%20is%20required%20because%20Cloud,than%2010%20minutes%20to%20complete.) for builds and deployments, and this was exceeded when PeekingDuck was included as a dependency as heavy sub-dependencies such as TensorFlow and Pytorch had to be installed.
+App Engine Standard Environment has a [default timeout of 10 minutes](https://cloud.google.com/build/docs/deploying-builds/deploy-appengine#:~:text=This%20is%20required%20because%20Cloud,than%2010%20minutes%20to%20complete.) for builds and deployments, and this was exceeded when PeekingDuck was included as a dependency as heavy sub-dependencies such as TensorFlow and Pytorch had to be installed.
 
-While the timeout can be adjusted, I decided to keep the App Engine deployment simple and only use it to try load testing and autoscaling. Thus, I excluded PeekingDuck from App Engine - CV instances here only need to save the received image to Cloud Storage without performing any inference. More details can be found in the [source code](server/app_engine_save_img/main.py). We will simulate an actual real-world use case with PeekingDuck when using Cloud Run and Kubernetes Engine.
+There is another version of App Engine called the Flexible Environment where more options such as this timeout can be tweaked, but I decided to keep the App Engine deployment simple and only use it to try load testing and autoscaling. Thus, I excluded PeekingDuck from App Engine - CV instances here only need to save the received image to Cloud Storage without performing any inference. More details can be found in the [source code](server/app_engine_save_img/main.py). We will simulate an actual real-world use case with PeekingDuck when using Cloud Run and Kubernetes Engine.
 
 ### Without Autoscaling
 
-First, let's see how it performs without autoscaling by setting the `max_instances` config in `app.yaml` to only 1 instance. The following settings were used for the load test:
-- **Number of users**: 1000
-- **Spawn rate**: Ramp up at 100 users/sec till max number of users is reached
+First, let's see how it performs without autoscaling by setting the `max_instances` config in `app.yaml` to only 1 instance. 
 
 <img src='images/app_engine/1_inst_1000_users_100_spawn_rate.png'><br>
 *Limited to 1 instance - 83% failure*
 
 The first plot above (Total Requests per Second) shows many failed requests, represented by the **red line**. The second plot above (Response Times) shows the 95% percentile of response time gradually creeping up to about 12 seconds.
+
 
 ### With Autoscaling
 
@@ -79,7 +93,7 @@ The first plot above (Total Requests per Second) shows that there were no failed
 <img src='images/app_engine/app_engine_instances.png'><br>
 *Google App Engine Instances*
 
-The screenshot above from Google App Engine's GUI shows that 13 instances have been spun up to handle the load. The number of requests handled vary across the board - it is likely that the instances which have handled less requests were spun up later.
+The screenshot above from Google App Engine's GUI shows that 13 instances have been spun up to handle the load. The number of requests handled vary across the board - it is likely that the instances which have handled less requests were spun up later. Note: it is important to **wait for the instances to shut down before starting a new experiment**, so that each experiment begins with an equal number of new instances. For App Engine, it takes approximately 15 minutes of inactivity for the idle instances to start shutting down.
 
 ### Adding Initialisation Time
 
