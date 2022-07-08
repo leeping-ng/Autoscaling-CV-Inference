@@ -84,9 +84,9 @@ Lastly, it is important to **wait for the instances to shut down before starting
 
 ## Google App Engine Results
 
-App Engine Standard Environment has a [default timeout of 10 minutes](https://cloud.google.com/build/docs/deploying-builds/deploy-appengine#:~:text=This%20is%20required%20because%20Cloud,than%2010%20minutes%20to%20complete.) for builds and deployments, and this was exceeded when PeekingDuck was included as a dependency as heavy sub-dependencies such as TensorFlow and Pytorch had to be installed.
+We will begin this series of experiments with App Engine, as it is the easiest to deploy. There is a catch though - App Engine Standard Environment has a [default timeout of 10 minutes](https://cloud.google.com/build/docs/deploying-builds/deploy-appengine#:~:text=This%20is%20required%20because%20Cloud,than%2010%20minutes%20to%20complete.) (note that this can be modified in App Engine Flexible Environment) for builds and deployments, and this was exceeded when PeekingDuck was included as a dependency as heavy sub-dependencies such as TensorFlow and Pytorch had to be installed.
 
-There is another version of App Engine called the Flexible Environment where more options such as this timeout can be tweaked, but I decided to keep the App Engine deployment simple and only use it to try load testing and autoscaling. Thus, I excluded PeekingDuck from App Engine - CV instances here only need to save the received image to Cloud Storage without performing any inference. More details can be found in the [source code](server/app_engine_save_img/main.py). We will simulate an actual real-world use case with PeekingDuck when using Cloud Run and Kubernetes Engine.
+I decided to exclude PeekingDuck from this App Engine experiment - CV instances here only need to save the received image to Cloud Storage without performing any inference. Thus, the objective here is mainly to try out autoscaling and load testing with Locust, before subsequently moving on to Cloud Run/ Kubernetes Engine with PeekingDuck.
 
 ### Without Autoscaling
 
@@ -116,14 +116,14 @@ The screenshot above from Google App Engine's GUI shows that 13 instances have b
 
 It is quite common for CV inference instances to require initialisation time for importing heavy packages such as TensorFlow and OpenCV, or for downloading model weights. This means that while App Engine has spun up a new instance to handle the increased traffic, this new instance is not quite ready to receive traffic yet, which may lead to failures. 
 
-I added a 10 second delay and ran the same load test with autoscaling enabled. Some requests started to fail, as expected, as the instances were still undergoing "initialisation". At worst, the failure rate reached about 8%. As more instances completed initialisation, the number of instantaneous failures gradually dropped zero.
+I added a 10 second delay to simulate “initialisation”, and ran the same load test with autoscaling enabled. Some requests started to fail, as expected, as the instances were still undergoing "initialisation". At worst, the failure rate reached about 8%. As more instances completed initialisation, the number of instantaneous failures gradually dropped zero.
 
 <img src='images/app_engine/unlimited_inst_10_sec_init.png'><br>
 *With 10 second delay - 8% failure at max*
 
-The red line in first plot above (Total Requests per Second) shows that there were some failed requests about halfway through the run. The median response time in second plot above (Response Times) is also much higher at about 10 seconds at the beginning, before it started dropping and stabilising at 3 seconds.
+The red line in first plot above (Total Requests per Second) shows that there were some failed requests about halfway through the run. The median response time in second plot above (Response Times) is also much higher at about 10 seconds at the beginning, before it started dropping and stabilising at 3 seconds. Thus, it is apparent that adding initialisation time does lead to failed requests.
 
-From these results, it is apparent that initialisation time does lead to failures, and we will see how we can mitigate this in the next section on Cloud Run.
+From these experiments with App Engine, we have familiarised ourselves with autoscaling and load testing using Locust. Next, we’ll move on to the main course - autoscaling of PeekingDuck instances, using Cloud Run.
 
 ## Google Cloud Run Results
 
@@ -138,7 +138,7 @@ We will **fix** the following Cloud Run settings for these experiments:
 
 We will **vary** the following Cloud Run and container settings:
 
-- Container image
+- Base container image
 - `Number of vCPUs` allocated to each container instance. The maximum allocatable memory will be chosen based on the number of vCPUs (Cloud Run hardware limitation).
 - `Concurrency`, the maximum number of concurrent requests that can reach each container instance.
 
@@ -185,7 +185,7 @@ We will run another experiment with these new settings:
 <img src='images/cloud_run/optimised autoscaling.png'><br>
 *After optimising for autoscaling - 0% failures!*
 
-The plots above show that we have **succeeded in our goal of achieving 0% failed requests** with PeekingDuck! 86 instances were spun up in this run, compared to 38 instances previously, and therefore Cloud Run was able to handle the incoming requests more comfortably. Additional benefits were also reaped from more autoscaled instances:
+The plots above show that we have succeeded in our goal of achieving 0% failed requests with PeekingDuck! 86 instances were spun up in this run, compared to 38 instances previously, and therefore Cloud Run was able to handle the incoming requests more comfortably. Additional benefits were also reaped from more autoscaled instances:
 - Number of requests per second (RPS) significantly increased from ~120RPS to ~300RPS
 - Median response times greatly reduced from about 8 seconds to 2 seconds
 
@@ -194,7 +194,7 @@ The plots above show that we have **succeeded in our goal of achieving 0% failed
 
 Digging deeper into CPU utilisation - the plot above shows that with 1vCPU (left), the median CPU utilisation exceeds the 60% threshold, prompting new instances to be spun up, while with 2vCPU (right), it does not exceed 60% on average.
 
-As we’ve attained success with Cloud Run, we'll move on to Kubernetes Engine next, where we'll have even more control over autoscaling settings.
+At this juncture, we have successfully proven that the proposed concept of autoscaling CV inference instances can work in reality, hitting almost **300 requests per second with zero failures**. Next, we’ll take things a step further with Kubernetes Engine, which provides even more control over autoscaling.
 
 ## Other Findings
 
