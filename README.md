@@ -1,5 +1,19 @@
 # Autoscaling Computer Vision Inference in the Cloud
 
+## Table of Contents:
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Tools Used](#tools-used)
+- [Load Test Conditions](#load-test-conditions)
+- [Google App Engine Results](#google-app-engine-results)
+    - [Without Autoscaling](#without-autoscaling)
+    - [With Autoscaling](#with-autoscaling)
+    - [Adding Initialisation Time](#adding-initialisation-time)
+- [Google Cloud Run Results](#google-cloud-run-results)
+    - [Lean vs Heavy Base Container Images](#lean-vs-heavy-base-container-images)
+- [Other Findings](#other-findings)
+
+
 ## Overview
 
 This repository consolidates the code used and results collected from experimenting with **autoscaling Computer Vision (CV) inference instances** in the cloud. Before we proceed further, a couple of terms will be explained in the following paragraphs.
@@ -65,6 +79,8 @@ What constitutes a failed request?
 
 Request timeout errors are not encountered as by default, App Engine Standard with automatic scaling has a [10 min timeout](https://cloud.google.com/appengine/docs/standard/python3/how-instances-are-managed#timeout), and Cloud Run has a [5 min timeout](https://cloud.google.com/run/docs/configuring/request-timeout). The plots in the subsequent sections show that the response times do not come anywhere close to these timeout limits.
 
+Lastly, it is important to **wait for the instances to shut down before starting a new experiment**, so that each experiment begins with an equal number of new instances. For App Engine and Cloud Run, it takes approximately 15 minutes of inactivity for the idle instances to start shutting down.
+
 ## Google App Engine Results
 
 App Engine Standard Environment has a [default timeout of 10 minutes](https://cloud.google.com/build/docs/deploying-builds/deploy-appengine#:~:text=This%20is%20required%20because%20Cloud,than%2010%20minutes%20to%20complete.) for builds and deployments, and this was exceeded when PeekingDuck was included as a dependency as heavy sub-dependencies such as TensorFlow and Pytorch had to be installed.
@@ -93,7 +109,7 @@ The first plot above (Total Requests per Second) shows that there were no failed
 <img src='images/app_engine/app_engine_instances.png'><br>
 *Google App Engine Instances*
 
-The screenshot above from Google App Engine's GUI shows that 13 instances have been spun up to handle the load. The number of requests handled vary across the board - it is likely that the instances which have handled less requests were spun up later. Note: it is important to **wait for the instances to shut down before starting a new experiment**, so that each experiment begins with an equal number of new instances. For App Engine, it takes approximately 15 minutes of inactivity for the idle instances to start shutting down.
+The screenshot above from Google App Engine's GUI shows that 13 instances have been spun up to handle the load. The number of requests handled vary across the board - it is likely that the instances which have handled less requests were spun up later. 
 
 ### Adding Initialisation Time
 
@@ -108,6 +124,48 @@ The red line in first plot above (Total Requests per Second) shows that there we
 
 From these results, it is apparent that initialisation time does lead to failures, and we will see how we can mitigate this in the next section on Cloud Run.
 
+## Google Cloud Run Results
+
+Google Cloud Run gives more control over the deployment compared to Google App Engine, but less compared to Google Kubernetes Engine. Also, Cloud Run is used with containers, thus we will introduce a containerised PeekingDuck into the experiment from here on.
+
+We will **fix** the following Cloud Run settings for these experiments:
+
+- CPU allocation: CPU always allocated, which is recommended when incoming traffic is steady, slowly varying like our load test. More info here.
+- Minimum number of instances: `5`, to reduce [cold starts](https://cloud.google.com/run/docs/configuring/min-instances) caused by initialisation time mentioned previously.
+- Maximum number of instances: `100`, which is the default.
+- Request timeout: `300 seconds`, which is the default.
+
+We will **vary** the following Cloud Run and container settings:
+
+- Container image
+- `Number of vCPUs` allocated to each container instance. The maximum allocatable memory will be chosen based on the number of vCPUs (Cloud Run hardware limitation).
+- `Maximum requests per container`
+
+### Lean vs Heavy Base Container Images
+
+This [Google Cloud blog](https://cloud.google.com/blog/topics/developers-practitioners/3-ways-optimize-cloud-run-response-times) explains that a leaner base image can reduce start-up time for Cloud Run. However, it also states that the size of the container image does not affect start-up time, i.e. similar start-up times should be observed with the following containers:
+
+- With base image “A” and a 20MB data file
+- With base image “A” and a 500GB data file
+
+We’ll fix `Number of vCPUs` to be 2vCPU with 8GB RAM, and `Maximum requests per container` to be 100, and run this experiment with the following container images:
+
+- **17.1GB** - [gcr.io/deeplearning-platform-release/base-cu110](http://gcr.io/deeplearning-platform-release/base-cu110) base image, one of Google’s [deep learning containers](https://cloud.google.com/deep-learning-containers/docs/overview) that come packaged with several Python ML packages, JupyterLab, and Nvidia drivers with CUDA and CuDNN.
+- **6.5GB** - python:3.7-slim base image.
+
+<img src='images/cloud_run/17.1GB container image.png'><br>
+*17.1GB heavy base image - overall 8% failure*
+
+<img src='images/cloud_run/6.5GB container image.png'><br>
+*6.5GB heavy base image - overall 8% failure*
+
+Despite the great difference in base image size (2.5x), both experiments have similar failure rates! This seems unexpected, but the following statement from the same [Google Cloud blog](https://cloud.google.com/blog/topics/developers-practitioners/3-ways-optimize-cloud-run-response-times) provides a clue:
+
+> Cold starts aren’t affected by the size of the image, but by the image system complexity and initialization time.
+
+My hunch is that as both containers need to run PeekingDuck, heavy packages such as OpenCV and TensorFlow have to be initialised anyway, bringing them level. Additionally, as the Cloud Run instances are GPU-less, the longer initialisation times usually associated with Nvidia CUDA of the deep learning container does not come into effect here. 
+
+Despite these results, it is still good practice to keep the container image lean, as it can greatly shorten upload and download times. Additionally, while these results are true for Cloud Run, it may not be the case for Kubernetes Engine, especially if each new instance has to download a fresh container image from the registry.
 
 ## Other Findings
 
