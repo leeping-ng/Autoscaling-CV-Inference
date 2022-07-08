@@ -11,6 +11,7 @@
     - [Adding Initialisation Time](#adding-initialisation-time)
 - [Google Cloud Run Results](#google-cloud-run-results)
     - [Lean vs Heavy Base Container Images](#lean-vs-heavy-base-container-images)
+    - [Concurrency and CPU Utilisation](#concurrency-and-cpu-utilisation)
 - [Other Findings](#other-findings)
 
 
@@ -139,7 +140,7 @@ We will **vary** the following Cloud Run and container settings:
 
 - Container image
 - `Number of vCPUs` allocated to each container instance. The maximum allocatable memory will be chosen based on the number of vCPUs (Cloud Run hardware limitation).
-- `Maximum requests per container`
+- `Concurrency`, the maximum number of concurrent requests that can reach each container instance.
 
 ### Lean vs Heavy Base Container Images
 
@@ -148,7 +149,7 @@ This [Google Cloud blog](https://cloud.google.com/blog/topics/developers-practit
 - With base image “A” and a 20MB data file
 - With base image “A” and a 500GB data file
 
-We’ll fix `Number of vCPUs` to be 2vCPU with 8GB RAM, and `Maximum requests per container` to be 100, and run this experiment with the following container images:
+We’ll fix `Number of vCPUs` to be 2vCPU with 8GB RAM, and `Concurrency` to be 100, and run this experiment with the following container images:
 
 - **17.1GB** - [gcr.io/deeplearning-platform-release/base-cu110](http://gcr.io/deeplearning-platform-release/base-cu110) base image, one of Google’s [deep learning containers](https://cloud.google.com/deep-learning-containers/docs/overview) that come packaged with several Python ML packages, JupyterLab, and Nvidia drivers with CUDA and CuDNN.
 - **6.5GB** - python:3.7-slim base image.
@@ -159,13 +160,41 @@ We’ll fix `Number of vCPUs` to be 2vCPU with 8GB RAM, and `Maximum requests pe
 <img src='images/cloud_run/6.5GB container image.png'><br>
 *6.5GB heavy base image - overall 8% failure*
 
-Despite the great difference in base image size (2.5x), both experiments have similar failure rates! This seems unexpected, but the following statement from the same [Google Cloud blog](https://cloud.google.com/blog/topics/developers-practitioners/3-ways-optimize-cloud-run-response-times) provides a clue:
+Despite the great difference in base image size (2.5x), both experiments have similar failure rates of 8% overall! This seems unexpected, but the following statement from the same [Google Cloud blog](https://cloud.google.com/blog/topics/developers-practitioners/3-ways-optimize-cloud-run-response-times) provides a clue:
 
 > Cold starts aren’t affected by the size of the image, but by the image system complexity and initialization time.
 
 My hunch is that as both containers need to run PeekingDuck, heavy packages such as OpenCV and TensorFlow have to be initialised anyway, bringing them level. Additionally, as the Cloud Run instances are GPU-less, the longer initialisation times usually associated with Nvidia CUDA of the deep learning container does not come into effect here. 
 
 Despite these results, it is still good practice to keep the container image lean, as it can greatly shorten upload and download times. Additionally, while these results are true for Cloud Run, it may not be the case for Kubernetes Engine, especially if each new instance has to download a fresh container image from the registry.
+
+### Concurrency and CPU Utilisation
+
+According to [Google Cloud’s documentation](https://cloud.google.com/run/docs/about-instance-autoscaling), autoscaling in Cloud Run is impacted by:
+1. Rate of incoming requests
+2. CPU utilisation of existing instances when they are processing requests, with a target to keep scheduled instances at 60% CPU utilisation
+
+Armed with this knowledge, we can create the optimal conditions to enable autoscaling:
+- As `concurrency` is the maximum number of concurrent requests that can reach each container instance, we can reduce this so that more instances have to be spun up.
+- We can also reduce the compute power of each instance so that the 60% CPU utilisation threshold is reached more often, forcing instances to be created. Interestingly, it does seem counterintuitive that we are reducing compute power in hopes of reducing failures.
+
+We will run another experiment with these new settings:
+- `Number of vCPUs`: **1vCPU with 4GB RAM**, reduced from 2vCPU with 8GB RAM
+- `Concurrency`: **30**, reduced from 100
+
+<img src='images/cloud_run/optimised autoscaling.png'><br>
+*After optimising for autoscaling - 0% failures!*
+
+The plots above show that we have **succeeded in our goal of achieving 0% failed requests** with PeekingDuck! 86 instances were spun up in this run, compared to 38 instances previously, and therefore Cloud Run was able to handle the incoming requests more comfortably. Additional benefits were also reaped from more autoscaled instances:
+- Number of requests per second (RPS) significantly increased from ~120RPS to ~300RPS
+- Median response times greatly reduced from about 8 seconds to 2 seconds
+
+<img src='images/cloud_run/cpu utilisation.png'><br>
+*1vCPU > 60% utilisation (left) vs 2vCPU < 60% utilisation (right)*
+
+Digging deeper into CPU utilisation - the plot above shows that with 1vCPU (left), the median CPU utilisation exceeds the 60% threshold, prompting new instances to be spun up, while with 2vCPU (right), it does not exceed 60% on average.
+
+As we’ve attained success with Cloud Run, we'll move on to Kubernetes Engine next, where we'll have even more control over autoscaling settings.
 
 ## Other Findings
 
