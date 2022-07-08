@@ -10,6 +10,7 @@
     - [With Autoscaling](#with-autoscaling)
     - [Adding Initialisation Time](#adding-initialisation-time)
 - [Google Cloud Run Results](#google-cloud-run-results)
+    - [Minimising Cold Starts](#minimising-cold-starts)
     - [Lean vs Heavy Base Container Images](#lean-vs-heavy-base-container-images)
     - [Concurrency and CPU Utilisation](#concurrency-and-cpu-utilisation)
 - [Other Findings](#other-findings)
@@ -80,7 +81,9 @@ What constitutes a failed request?
 
 Request timeout errors are not encountered as by default, App Engine Standard with automatic scaling has a [10 min timeout](https://cloud.google.com/appengine/docs/standard/python3/how-instances-are-managed#timeout), and Cloud Run has a [5 min timeout](https://cloud.google.com/run/docs/configuring/request-timeout). The plots in the subsequent sections show that the response times do not come anywhere close to these timeout limits.
 
-Lastly, it is important to **wait for the instances to shut down before starting a new experiment**, so that each experiment begins with an equal number of new instances. For App Engine and Cloud Run, it takes approximately 15 minutes of inactivity for the idle instances to start shutting down.
+Additionally, it is important to **wait for the instances to shut down before starting a new experiment**, so that each experiment begins with an equal number of new instances. For App Engine and Cloud Run, it takes approximately 15 minutes of inactivity for the idle instances to start shutting down.
+
+Lastly, while we are interested in the autoscaling effects on Google Cloud and our application code on the server side, let us not forget that the results are also partly dependent on the hardware that Locust is running on, as well as other factors such as network bandwidth. While I have kept the hardware (2017 MacBook Pro with 2.9 GHz Quad-Core Intel Core i7 and 16GB RAM) as well as other factors as consistent as possible, the purpose of this study is to test out the autoscaling concept rather than to obtain raw performance numbers.
 
 ## Google App Engine Results
 
@@ -130,17 +133,29 @@ From these experiments with App Engine, we have familiarised ourselves with auto
 Google Cloud Run gives more control over the deployment compared to Google App Engine, but less compared to Google Kubernetes Engine. Also, Cloud Run is used with containers, thus we will introduce a containerised PeekingDuck into the experiment from here on.
 
 We will **fix** the following Cloud Run settings for these experiments:
-
-- CPU allocation: CPU always allocated, which is recommended when incoming traffic is steady, slowly varying like our load test. More info here.
-- Minimum number of instances: `5`, to reduce [cold starts](https://cloud.google.com/run/docs/configuring/min-instances) caused by initialisation time mentioned previously.
+- CPU allocation: CPU always allocated, which is recommended when incoming traffic is steady, slowly varying like our load test. More info [here](https://cloud.google.com/run/docs/configuring/cpu-allocation).
 - Maximum number of instances: `100`, which is the default.
 - Request timeout: `300 seconds`, which is the default.
 
 We will **vary** the following Cloud Run and container settings:
-
+- `Minimum number of instances`
 - Base container image
 - `Number of vCPUs` allocated to each container instance. The maximum allocatable memory will be chosen based on the number of vCPUs (Cloud Run hardware limitation).
 - `Concurrency`, the maximum number of concurrent requests that can reach each container instance.
+
+### Minimising Cold Starts
+
+The last experiment with App Engine showed that long initialisation times, also known as “cold starts”, can lead to more failed requests. To [minimise cold starts](https://cloud.google.com/run/docs/tips/general#using_minimum_instances_to_reduce_cold_starts), we can increase the `minimum number of instances` setting so that more instances are running and ready once the load test starts. We’ll run 2 tests with the following settings:
+- Minimum **0** instances
+- Minimum **5** instances
+
+<img src='images/cloud_run/0 min instances.png'><br>
+*Minimum 0 instances*
+
+<img src='images/cloud_run/5 min instances.png'><br>
+*Minimum 5 instances*
+
+The plots above show that when starting with zero instances, failed requests occur sooner. Additionally, response times are much longer at the beginning (10 seconds), compared to 1 second for the run which started with 5 instances. Moving forward, to minimise cold starts, we will set `minimum number of instances` to be 5.
 
 ### Lean vs Heavy Base Container Images
 
