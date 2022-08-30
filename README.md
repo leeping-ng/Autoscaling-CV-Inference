@@ -13,6 +13,7 @@
     - [Minimising Cold Starts](#minimising-cold-starts)
     - [Lean vs Heavy Base Container Images](#lean-vs-heavy-base-container-images)
     - [Concurrency and CPU Utilisation](#concurrency-and-cpu-utilisation)
+- [Google Kubernetes Engine](#google-kubernetes-engine)
 - [Other Findings](#other-findings)
 
 
@@ -209,8 +210,23 @@ The plots above show that we have succeeded in our goal of achieving 0% failed r
 
 Digging deeper into CPU utilisation - the plot above shows that with 1vCPU (left), the median CPU utilisation exceeds the 60% threshold, prompting new instances to be spun up, while with 2vCPU (right), it does not exceed 60% on average.
 
-At this juncture, we have successfully proven that the proposed concept of autoscaling CV inference instances can work in reality, hitting almost **300 requests per second with zero failures**. Next, we’ll take things a step further with Kubernetes Engine, which provides even more control over autoscaling.
+At this juncture, we have successfully proven that the proposed concept of autoscaling CV inference instances can work in reality, hitting almost **300 requests per second with zero failures**. Next, let’s look at Kubernetes Engine, which provides even more control over autoscaling.
+
+## Google Kubernetes Engine
+
+There are a lot more knobs to fiddle with when using Kubernetes Engine, and in our case it may not necessarily be a good thing. In Kubernetes terminology, applications or Docker containers are hosted within **Pods**, and multiple Pods can run on **Nodes**, which can be virtual or physical machines. There are 3 main ways to autoscale in Kubernetes:
+
+- Horizontal pod autoscaling - increases the number of replicated Pods within a node
+- Vertical pod autoscaling - increases the size of the Pod (CPU or memory)
+- Cluster autoscaling - provisions a new node (compute unit) to add to the cluster
+
+While the overall cost is proportional to the number of spun-up instances in the serverless App Engine and Cloud Run services, it is not the case for Kubernetes Engine. Even if you have only 1 Pod running within a node, you’ll still have to pay for the cost of the entire machine (node). If the number of required pods exceeds the node’s capacity, you’ll need to provision a new node, and now pay for 2 machines. To minimise costs, you can make use of cluster autoscaling more - fit only 1 Pod within each node to avoid for excess capacity - but this introduces another problem below.
+
+This useful [guide](https://learnk8s.io/kubernetes-autoscaling-strategies) shows that it could take up to 7 mins for more Pods to be spun-up to handle traffic. This includes the lead times for horizontal Pod autoscaling, cluster autoscaling, cloud provider provisioning time, and container runtime. I ran a few experiments and this lead time was simply too long for our load test scenario. 
+
+Thus, I did not proceed with a full set of experiments with Kubernetes Engine, as it introduced significant trade-offs between cost and performance which did not exist for the serverless options. Results from the App Engine and Cloud Run experiments have met our initial requirements, and we can therefore conclude this study.
 
 ## Other Findings
 
 - A timestamp is appended to the filename of each resulting image that is saved to Google Cloud Storage. Multiple resulting images could be produced within the same second, and since they have the same filename, the file would keep getting overwritten. This has caused errors in the past as it exceeded the rate limit of change requests in Cloud Storage. This was fixed by including microseconds to the filename (nanoseconds would only be required for a >1,000 FPS camera which is not realistic for our use case).
+- Afternote - these experiments helped me develop the [PeekingDuck Server](https://github.com/aisingapore/PeekingDuck/pull/697) feature subsequently.
