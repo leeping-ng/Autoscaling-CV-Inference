@@ -229,4 +229,5 @@ Thus, I did not proceed with a full set of experiments with Kubernetes Engine, a
 ## Other Findings
 
 - A timestamp is appended to the filename of each resulting image that is saved to Google Cloud Storage. Multiple resulting images could be produced within the same second, and since they have the same filename, the file would keep getting overwritten. This has caused errors in the past as it exceeded the rate limit of change requests in Cloud Storage. This was fixed by including microseconds to the filename (nanoseconds would only be required for a >1,000 FPS camera which is not realistic for our use case).
-- Afternote - these experiments helped me develop the [PeekingDuck Server](https://github.com/aisingapore/PeekingDuck/pull/697) feature subsequently.
+- **Afternote**: these experiments helped me develop the [PeekingDuck Server](https://github.com/aisingapore/PeekingDuck/pull/697) feature subsequently. I used a simple request response communication model in this study, but have added other communication models such as publish subscribe or message queues in PeekingDuck Server. These can all be 
+used in conjunction with autoscaling, and their trade-offs and use cases have been documented [here](communication_models.md).
