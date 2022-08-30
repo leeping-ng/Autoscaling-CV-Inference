@@ -1,4 +1,5 @@
 import base64
+import datetime
 import os
 import requests
 
@@ -17,5 +18,8 @@ with open(IMAGE_PATH, "rb") as image_file:
     # On the other side, you'll need to encode("utf-8") to change back to bytes object.
     image_encoded = base64.b64encode(image_file.read()).decode("utf-8")
 
-data = {"name": OBJECT_NAME, "image": image_encoded}
+current_time = datetime.datetime.now()
+time_str = current_time.strftime("%y%m%d_%H%M%S_%f")
+
+data = {"name": OBJECT_NAME, "image": image_encoded, "timestamp": time_str}
 requests.post(URL, json=data)
